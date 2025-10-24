@@ -1,4 +1,3 @@
-from __future__ import annotations
 from pdfminer.high_level import extract_text as pdf_extract_text
 from docx import Document
 import os

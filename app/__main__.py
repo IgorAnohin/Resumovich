@@ -6,15 +6,10 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
 
-from .config import get_settings, Settings
-from .db import init_db
-from .bot import setup_handlers
-from .payments import router as payments_router
-from .cover import router as cover_router
-from .monitoring import app as monitoring_app
-
-import uvicorn
-from fastapi import FastAPI
+from app.cv_analyzer.llm import LLMService
+from app.telegram.routes import setup_routes
+from app.settings import get_settings, Settings
+from app.db import init_db
 
 logging.basicConfig(level=logging.INFO)
 
@@ -30,38 +25,31 @@ def init_sentry(dsn: str | None) -> None:
         release=os.environ.get("RELEASE", "resume-bot@2"),
     )
 
-async def start_metrics_server(host: str, port: int) -> None:
-    uvconfig = uvicorn.Config(monitoring_app, host=host, port=port, log_level="info")
-    server = uvicorn.Server(uvconfig)
-    await server.serve()
 
 async def async_main() -> None:
     load_dotenv()
     settings = get_settings()
+
+    llm_service = LLMService.build(settings)
+    print(await llm_service.full_feedback("Test resume text for LLM initialization."))
+
     init_sentry(settings.sentry_dsn)
     await init_db(settings.mongo_dsn, settings.db_name)
 
     bot = Bot(token=settings.telegram_token, parse_mode=None)
     tg_messages_dispatcher = Dispatcher()
-    # Routers
-    tg_messages_dispatcher.include_router(payments_router)
-    tg_messages_dispatcher.include_router(cover_router)
-    # Dependency injection: Settings
-    tg_messages_dispatcher[Settings] = settings
-
     # Core handlers
-    setup_handlers(tg_messages_dispatcher, bot, settings)
+    setup_routes(tg_messages_dispatcher, bot, settings)
 
-    await asyncio.gather(
-        tg_messages_dispatcher.start_polling(bot, close_bot_session=True),
-        start_metrics_server(settings.metrics_host, settings.metrics_port),
-    )
+    await tg_messages_dispatcher.start_polling(bot, close_bot_session=True)
+
 
 def main() -> None:
     try:
         asyncio.run(async_main())
     except KeyboardInterrupt:
         pass
+
 
 if __name__ == "__main__":
     main()

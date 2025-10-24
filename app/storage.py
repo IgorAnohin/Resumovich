@@ -19,6 +19,7 @@ def save_upload(base_dir: str, user_id: int, filename: str, data: bytes) -> str:
     stamp = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
     fname = _safe_name(f"{stamp}_{digest}{ext}")
     path = os.path.join(sub, fname)
+
     with open(path, "wb") as f:
         f.write(data)
     return path

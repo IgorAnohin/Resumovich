@@ -10,7 +10,7 @@ async def init_db(dsn: str, db_name: str) -> AsyncIOMotorDatabase:
     global _client, _db
     _client = AsyncIOMotorClient(dsn)
     _db = _client.get_database(db_name)
-    # Индексы
+
     await _db.users.create_index("tg_user_id", unique=True)
     await _db.messages.create_index([("message_id", 1), ("chat_id", 1)])
     await _db.analyses.create_index([("user_id", 1), ("created_at", -1)])
