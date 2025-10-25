@@ -1,6 +1,8 @@
+import asyncio
 import io, logging
 from datetime import datetime
 
+import sentry_sdk
 from aiogram import Bot, Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -11,17 +13,18 @@ from pydantic import BaseModel
 from app.cv_analyzer.static import analyze_resume_text
 from app.cv_analyzer.llm import LLMService
 from app.dal import MessagesDAL, AnalyticsDAL, UsersDAL
-from app.models import MessageModel, Analysis, Mode, User, MessageType, AnalysisDetail
+from app.models import MessageModel, Analysis, MessageType, AnalysisDetail
 from app.settings import Settings
 from app.storage import save_upload
-from app.text_utils import extract_text_auto
+from app.utils.long_messages import send_long_message
+from app.utils.text_parser import extract_text_auto
 
 logger = logging.getLogger(__name__)
-
 
 analysis_router = Router(name="analyis")
 
 CALLBACK_DATA = "skip_vacancy_details"
+
 
 class AnalysisScene(StatesGroup):
     resume_waiting = State()
@@ -158,7 +161,6 @@ async def handle_vacancy_text(message: Message, state: FSMContext, bot: Bot, set
 
 @analysis_router.callback_query(AnalysisScene.vacancy_waiting, F.data == CALLBACK_DATA)
 async def handle_skip_vacancy(callback: CallbackQuery, state: FSMContext, settings: Settings) -> None:
-
     await MessagesDAL.insert(
         MessageModel(
             type=MessageType.CALLBACK,
@@ -186,13 +188,12 @@ async def handle_skip_vacancy(callback: CallbackQuery, state: FSMContext, settin
     await state.clear()
 
 
-
-async def process_resume(message: Message, cv_info: DocumentInfo, vacancy_info: DocumentInfo, settings: Settings) -> None:
-
+async def process_resume(message: Message, cv_info: DocumentInfo, vacancy_info: DocumentInfo,
+                         settings: Settings) -> None:
     heuristic = analyze_resume_text(cv_info.data)
     score = heuristic.score
 
-    await message.answer("Анализируем резюме...")
+    await message.answer("Анализируем резюме...\nЭто может занять несколько минут.")
     try:
         llm_service = LLMService.build(settings)
         detail = await llm_service.full_feedback(
@@ -221,28 +222,37 @@ async def process_resume(message: Message, cv_info: DocumentInfo, vacancy_info: 
     user = await UsersDAL.get_user(message.from_user.id)
     if user.one_time_full_left > 0:
         await UsersDAL.consume_one_time_full(user.tg_user_id)
-        await message.answer("На этом демонстрация окончена. Если хотите узнать, как наш бот отреагирует на новое резюме, купите подписку. Команта /subscription")
+        await message.answer(
+            "На этом демонстрация окончена. Если хотите узнать, как наш бот отреагирует на новое резюме, купите подписку. Команта /subscription")
 
 
 async def send_ok_message(detail: AnalysisDetail, message: Message) -> None:
+    sections: list[str] = [f"<b>📊 Оценка резюме: {detail.score}/100</b>"]
 
-    await message.answer(f"Оценка резюме: {detail.score or score}/100")
-
-    # Ответ пользователю
-    parts = []
     if detail.strengths:
-        parts.append("Сильные стороны:\n" + "\n".join(f"• {s}" for s in detail.strengths))
+        strengths = "\n".join(f"• {s}" for s in detail.strengths)
+        sections.append(f"<b>✅ Сильные стороны</b>\n{strengths}")
+
     if detail.problems:
-        parts.append("Проблемы:\n" + "\n".join(f"• {p}" for p in detail.problems))
+        problems = "\n".join(f"• {p}" for p in detail.problems)
+        sections.append(f"<b>⚠️ Проблемы</b>\n{problems}")
+
     if detail.actions:
-        parts.append("Что сделать:\n" + "\n".join(f"• {a}" for a in detail.actions[:10]))
-    await message.answer("\n\n".join(parts) or "Готово. Детали сформированы.")
+        # Limit to first 10 actionable items
+        actions = "\n".join(f"• {a}" for a in detail.actions[:10])
+        sections.append(f"<b>🛠 Что сделать</b>\n{actions}")
+
+    full_text = "\n\n".join(sections) if sections else "<b>Готово.</b> Детали сформированы."
+    await send_long_message(message, full_text, parse_mode="HTML")
+
 
 async def send_raw_message(detail: AnalysisDetail, message: Message) -> None:
+    sentry_sdk.capture_message("LLM resume analysis parsing failed for user", level="warning",
+                               extra={"user_id": message.from_user.id, "message_id": message.message_id})
     await message.answer(
         "Не удалось корректно проанализировать резюме. Вот что вернуло LLM (возможно, формат ответа не соответствует ожидаемому):"
     )
-    await message.answer(f"```\n{detail.raw}\n```", parse_mode="MarkdownV2")
+    await send_long_message(message, detail.raw, parse_mode="MarkdownV2")
 
 
 async def get_text_from_message(bot: Bot, message: Message, data_dir: str) -> DocumentInfo:

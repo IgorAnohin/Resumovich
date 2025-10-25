@@ -6,7 +6,6 @@ import sentry_sdk
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.aiohttp import AioHttpIntegration
-from sentry_sdk.integrations.openai_agents import OpenAIAgentsIntegration
 
 from app.telegram.commander import setup_commands
 from app.telegram.routes import setup_routes
@@ -26,7 +25,6 @@ def init_sentry(dsn: str | None) -> None:
             LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
             AioHttpIntegration(),
             AsyncioIntegration(),
-            OpenAIAgentsIntegration()
         ],
         environment=os.environ.get("ENVIRONMENT", "production"),
         release=os.environ.get("RELEASE", "resume-bot@2"),
