@@ -18,6 +18,7 @@ class MessageType(StrEnum):
     CALLBACK = "callback"
     DOCUMENT = "document"
     TEXT = "text"
+    COMMAND = "command"
     BOT_ANSWER = "bot_answer"
 
 
@@ -25,13 +26,12 @@ class User(BaseModel):
     tg_user_id: int
     tg_chat_id: int
     name: str
-    subscription_until: datetime
-    created_at: datetime = Field(..., default_factory=datetime.now)
     accepted_rules: bool = False
-    plan: Plans = Plans.FREE
+    subscription_until: datetime
     one_time_full_left: int = 1
     cover_packs_left: int = 0
     hr_reviews_left: int = 0
+    created_at: datetime = Field(..., default_factory=datetime.now)
     updated_at: Optional[datetime] = None
 
 class AnalysisDetail(BaseModel):
@@ -46,8 +46,7 @@ class AnalysisDetail(BaseModel):
 
 class Analysis(BaseModel):
     user_id: int
-    filename: str
-    mode: Mode  # "score_only" | "full"
+    filepaths: list[str]
     details: list[AnalysisDetail]
     created_at: datetime = Field(..., default_factory=datetime.now)
 
@@ -61,3 +60,4 @@ class MessageModel(BaseModel):
     callback_data: Optional[Any] = None
     file_name: Optional[str] = None
     created_at: datetime = Field(..., default_factory=datetime.now)
+

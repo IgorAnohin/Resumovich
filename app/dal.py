@@ -1,6 +1,5 @@
-from __future__ import annotations
 from datetime import datetime, timedelta
-from typing import Optional, Any, Dict
+from typing import Any, Dict
 
 from aiogram.types import Message
 from bson import ObjectId
@@ -8,21 +7,24 @@ from bson import ObjectId
 from .db import db
 from .models import User, Analysis, MessageModel
 
+class UserNotFound(Exception):
+    pass
+
 class UsersDAL:
     @classmethod
     async def ensure_user_from_message(cls, message: Message) -> User:
-        existing = await cls.get_user(message.from_user.id)
-        if existing:
-            return existing
-        name = f"{message.from_user.first_name} {message.from_user.last_name}"
-        # One-time free value can be set via environment by app initialization; keep default here
-        return await cls._create_user(message.from_user.id, message.chat.id, name)
+        try:
+            return await cls.get_user(message.from_user.id)
+        except UserNotFound:
+            name = f"{message.from_user.first_name} {message.from_user.last_name}"
+            # One-time free value can be set via environment by app initialization; keep default here
+            return await cls._create_user(message.from_user.id, message.chat.id, name)
 
     @staticmethod
-    async def get_user(tg_user_id: int) -> Optional[User]:
+    async def get_user(tg_user_id: int) -> User:
         doc = await db().users.find_one({"tg_user_id": tg_user_id})
         if not doc:
-            return None
+            raise UserNotFound("User not found")
         return User.model_validate(doc)
 
     @staticmethod
@@ -51,6 +53,13 @@ class UsersDAL:
             {"$inc": {"one_time_full_left": -1}},
         )
         return bool(res.modified_count)
+
+    @staticmethod
+    async def set_subscription_until(tg_user_id: int, until: datetime) -> None:
+        await db().users.update_one(
+            {"tg_user_id": tg_user_id},
+            {"$set": {"subscription_until": until, "updated_at": datetime.utcnow()}},
+        )
 
 
 class MessagesDAL:

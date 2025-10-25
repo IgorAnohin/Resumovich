@@ -28,4 +28,7 @@ def extract_text_auto(path: str) -> str:
         return extract_text_from_pdf(path)
     if ext in (".docx", ):
         return extract_text_from_docx(path)
+    if ext in (".txt", ):
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
     return ""
