@@ -1,5 +1,6 @@
 import asyncio
 import io, logging
+import re
 from datetime import datetime
 
 import sentry_sdk
@@ -220,39 +221,60 @@ async def process_resume(message: Message, cv_info: DocumentInfo, vacancy_info: 
         await send_raw_message(detail, message)
 
     user = await UsersDAL.get_user(message.from_user.id)
-    if user.one_time_full_left > 0:
-        await UsersDAL.consume_one_time_full(user.tg_user_id)
-        await message.answer(
-            "На этом демонстрация окончена. Если хотите узнать, как наш бот отреагирует на новое резюме, купите подписку. Команта /subscription")
+    await UsersDAL.consume_one_time_full(user.tg_user_id)
+    await message.answer(
+        "На этом демонстрация окончена.\n\n"
+        "Если хотите узнать, как наш бот отреагирует на новое резюме, купите подписку. Команда /subscription"
+    )
+
+
+def _escape_md_v2(text: str) -> str:
+    # Telegram MarkdownV2 requires escaping these characters
+    return re.sub(r'([_*[\]()~`>#\+\-=|{}\.!])', r'\\\1', text)
 
 
 async def send_ok_message(detail: AnalysisDetail, message: Message) -> None:
-    sections: list[str] = [f"<b>📊 Оценка резюме: {detail.score}/100</b>"]
+    score_str = str(detail.score) if detail.score is not None else "—"
+    sections: list[str] = [f"*📊 Оценка резюме: {_escape_md_v2(score_str)}/100*"]
 
     if detail.strengths:
-        strengths = "\n".join(f"• {s}" for s in detail.strengths)
-        sections.append(f"<b>✅ Сильные стороны</b>\n{strengths}")
+        strengths = "\n".join(f"• {_escape_md_v2(s)}" for s in detail.strengths)
+        sections.append(f"*✅ Сильные стороны*\n{strengths}")
+
+        full_text = "\n\n".join(sections)
+        await send_long_message(message, full_text, parse_mode="MarkdownV2")
+        sections = []
 
     if detail.problems:
-        problems = "\n".join(f"• {p}" for p in detail.problems)
-        sections.append(f"<b>⚠️ Проблемы</b>\n{problems}")
+        problems = "\n".join(f"• {_escape_md_v2(p)}" for p in detail.problems)
+        sections.append(f"*⚠️ Проблемы*\n{problems}")
+
+        full_text = "\n\n".join(sections)
+        await send_long_message(message, full_text, parse_mode="MarkdownV2")
+        sections = []
 
     if detail.actions:
-        # Limit to first 10 actionable items
-        actions = "\n".join(f"• {a}" for a in detail.actions[:10])
-        sections.append(f"<b>🛠 Что сделать</b>\n{actions}")
+        actions = "\n".join(f"• {_escape_md_v2(a)}" for a in detail.actions[:10])
+        sections.append(f"*🛠 Что сделать*\n{actions}")
 
-    full_text = "\n\n".join(sections) if sections else "<b>Готово.</b> Детали сформированы."
-    await send_long_message(message, full_text, parse_mode="HTML")
+        full_text = "\n\n".join(sections)
+        await send_long_message(message, full_text, parse_mode="MarkdownV2")
+        sections = []
+
+    if sections:
+        full_text = "\n\n".join(sections)
+        await send_long_message(message, full_text, parse_mode="MarkdownV2")
 
 
 async def send_raw_message(detail: AnalysisDetail, message: Message) -> None:
-    sentry_sdk.capture_message("LLM resume analysis parsing failed for user", level="warning",
-                               extra={"user_id": message.from_user.id, "message_id": message.message_id})
+    sentry_sdk.capture_message(
+        f"LLM resume analysis parsing failed for user. {message.from_user.id=} {message.message_id=}",
+        level="warning",
+    )
     await message.answer(
         "Не удалось корректно проанализировать резюме. Вот что вернуло LLM (возможно, формат ответа не соответствует ожидаемому):"
     )
-    await send_long_message(message, detail.raw, parse_mode="MarkdownV2")
+    await send_long_message(message, _escape_md_v2(detail.raw), parse_mode="MarkdownV2")
 
 
 async def get_text_from_message(bot: Bot, message: Message, data_dir: str) -> DocumentInfo:

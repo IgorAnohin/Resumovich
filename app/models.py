@@ -42,6 +42,7 @@ class AnalysisDetail(BaseModel):
     sections: Dict[str, Any]
     ok: bool
     raw: str
+    prompt: str
 
 
 class Analysis(BaseModel):

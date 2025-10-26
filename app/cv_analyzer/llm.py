@@ -1,19 +1,22 @@
 from __future__ import annotations
 import json
+import logging
 from typing import Any
 import httpx
 import sentry_sdk
 from openai import AsyncOpenAI
 
 from pydantic import BaseModel
-from sentry_sdk.integrations import openai
 
 from app.models import AnalysisDetail
 from app.settings import Settings
 
+logger = logging.getLogger(__name__)
+
 
 class LLMParseResult(BaseModel):
     data: dict[str, Any]
+    raw: str
     success: bool
 
 
@@ -30,22 +33,26 @@ class OpenAIClient:
         content = await self._post(system, user)
 
         try:
-            return LLMParseResult(data={
-                **json.loads(content),
-                "raw": content,
-            },
-            success=True)
+            return LLMParseResult(
+                data=json.loads(content.replace("\\", "/")),
+                success=True,
+                raw=content,
+            )
         except Exception:
             try:
+                logger.exception("Unable to parse LLM response as JSON")
                 return LLMParseResult(
-                    data={
-                        **json.loads(content.strip().split("```json")[-1].split("```")[-2]),
-                        "raw": content,
-                    },
+                    data=json.loads(content.strip().split("```json")[-1].split("```")[-2]),
                     success=True,
+                    raw=content,
                 )
             except:
-                return LLMParseResult(data={"raw": content}, success=False)
+                logger.exception("Unable to parse LLM response second time")
+                return LLMParseResult(
+                    data={},
+                    success=False,
+                    raw=content,
+                )
 
     async def _post(self, system: str, user: str) -> str:
         if "api.openai.com" in str(self._client.base_url):
@@ -65,7 +72,6 @@ class OpenAIClient:
                 ],
             )
             return response.choices[0].message.content
-
 
 
 class LLMService:
@@ -91,6 +97,7 @@ class LLMService:
 КОНТЕКСТ АНАЛИЗА:
 - Анализируешь резюме для российского рынка труда 2025 года
 - Учитываешь требования ATS-систем hh.ru, Работа.ру и корпоративных систем подбора
+- Учитывай резюме с hh.ru, которые скорее всего будут иметь специальную шапку. В такие нельзя вставить summary или изменить структуру
 - Оцениваешь резюме так, как его увидит HR-менеджер за первые 30 секунд просмотра
 
 СТРУКТУРА АНАЛИЗА:
@@ -129,11 +136,11 @@ class LLMService:
 {vacancy_info}
 ---
 """
-        user += "\nВ качестве результата верни JSON с указанной схемой"
+        user += "\nВ качестве результата верни JSON С УКАЗАННОЙ СХЕМОЙ"
 
         with sentry_sdk.start_transaction(
-            name="The result of the AI inference",
-            op="ai-inference",
+                name="The result of the AI inference",
+                op="ai-inference",
         ):
             llm_parse_result = await self._client.gen_json(sys, user)
 
@@ -144,5 +151,6 @@ class LLMService:
             actions=llm_parse_result.data.get("actions", []),
             sections=llm_parse_result.data.get("sections", {}),
             ok=llm_parse_result.success,
-            raw=llm_parse_result.data["raw"]
+            raw=llm_parse_result.raw,
+            prompt=sys + "\n" + user,
         )

@@ -49,7 +49,7 @@ class UsersDAL:
     @staticmethod
     async def consume_one_time_full(tg_user_id: int) -> bool:
         res = await db().users.update_one(
-            {"tg_user_id": tg_user_id, "one_time_full_left": {"$gt": 0}},
+            {"tg_user_id": tg_user_id},
             {"$inc": {"one_time_full_left": -1}},
         )
         return bool(res.modified_count)

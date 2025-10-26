@@ -55,5 +55,5 @@ def _split_text(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
 
 
 async def send_long_message(message: Message, text: str, parse_mode: str = "HTML") -> None:
-    for chunk in _split_text(text, 4000):
+    for chunk in _split_text(text, 3500):
         await message.answer(chunk, parse_mode=parse_mode)
