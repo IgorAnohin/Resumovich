@@ -5,7 +5,8 @@ from aiogram.types import Message
 from bson import ObjectId
 
 from .db import db
-from .models import User, Analysis, MessageModel
+from .models import User, Analysis, MessageModel, FileChecking
+
 
 class UserNotFound(Exception):
     pass
@@ -33,7 +34,7 @@ class UsersDAL:
             tg_user_id=tg_user_id,
             tg_chat_id=tg_chat_id,
             name=name,
-            subscription_until=datetime.utcnow() + timedelta(days=3),
+            subscription_until=datetime.utcnow() - timedelta(days=1),
         )
         await db().users.insert_one(user.model_dump())
         return user
@@ -44,6 +45,15 @@ class UsersDAL:
             {"tg_user_id": user_id},
             {"$set": {"accepted_rules": True, "updated_at": datetime.utcnow()}},
         )
+
+
+    @staticmethod
+    async def add_one_time_full_check(tg_user_id: int) -> bool:
+        res = await db().users.update_one(
+            {"tg_user_id": tg_user_id},
+            {"$inc": {"one_time_full_left": 1}},
+        )
+        return bool(res.modified_count)
 
 
     @staticmethod
@@ -74,11 +84,9 @@ class AnalyticsDAL:
         res = await db().analyses.insert_one(data.model_dump())
         return res.inserted_id
 
+
+class FileCheckingDAL:
     @staticmethod
-    async def update_analysis(analysis_id: Any, fields: Dict[str, Any]) -> None:
-        if not isinstance(analysis_id, ObjectId):
-            try:
-                analysis_id = ObjectId(str(analysis_id))
-            except Exception:
-                pass
-        await db().analyses.update_one({"_id": analysis_id}, {"$set": fields})
+    async def insert(data: FileChecking) -> ObjectId:
+        res = await db().file_checking.insert_one(data.model_dump())
+        return res.inserted_id

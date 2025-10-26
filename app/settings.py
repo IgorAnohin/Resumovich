@@ -1,37 +1,31 @@
 from __future__ import annotations
 import os
 from pydantic import BaseModel
+from pydantic_settings import SettingsConfigDict, BaseSettings
 
-class Settings(BaseModel):
+
+class LLMSettings(BaseModel):
+    base_url: str
+    api_key: str
+    general_model: str
+    small_model: str
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_nested_delimiter='__')
+
     telegram_token: str
-    mongo_dsn: str
-    db_name: str
-    data_dir: str
+    mongo_dsn: str = "mongodb://localhost:27017/resume_bot"
+    db_name: str = "resume_bot"
+    data_dir: str = "/data/uploads"
+    free_one_time_full: int = 1
     sentry_dsn: str | None
     user_agreement_url: str | None
     privacy_url: str | None
-    free_one_time_full: int
-    llm_base_url: str | None
-    llm_api_key: str | None
-    llm_model_name: str | None
+    # llm_settings: LLMSettings | None = None
     payments_provider_token: str | None = None
+    llm_settings: LLMSettings
 
 
 def get_settings() -> Settings:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
-    return Settings(
-        telegram_token=token,
-        mongo_dsn=os.environ.get("MONGO_DSN", "mongodb://localhost:27017/resume_bot"),
-        db_name=os.environ.get("DB_NAME", "resume_bot"),
-        data_dir=os.environ.get("DATA_DIR", "/data/uploads"),
-        sentry_dsn=os.environ.get("SENTRY_DSN"),
-        user_agreement_url=os.environ.get("USER_AGREEMENT_URL"),
-        privacy_url=os.environ.get("PRIVACY_URL"),
-        free_one_time_full=int(os.environ.get("FREE_ONE_TIME_FULL", "1")),
-        llm_base_url=os.environ.get("LLM_BASE_URL"),
-        llm_api_key=os.environ.get("LLM_API_KEY"),
-        llm_model_name=os.environ.get("LLM_MODEL_NAME"),
-        payments_provider_token=os.environ.get("PAYMENTS_PROVIDER_TOKEN"),
-    )
+    return Settings()

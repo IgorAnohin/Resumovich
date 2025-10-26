@@ -52,6 +52,18 @@ class Analysis(BaseModel):
     created_at: datetime = Field(..., default_factory=datetime.now)
 
 
+class CheckFileResult(BaseModel):
+    is_valid: bool
+    reason: str
+
+
+class FileChecking(BaseModel):
+    user_id: int
+    filepath: str
+    result: CheckFileResult
+    created_at: datetime = Field(..., default_factory=datetime.now)
+
+
 class MessageModel(BaseModel):
     type: MessageType
     message_id: int

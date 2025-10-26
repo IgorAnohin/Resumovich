@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 from app.cv_analyzer.static import analyze_resume_text
 from app.cv_analyzer.llm import LLMService
-from app.dal import MessagesDAL, AnalyticsDAL, UsersDAL
-from app.models import MessageModel, Analysis, MessageType, AnalysisDetail
+from app.dal import MessagesDAL, AnalyticsDAL, UsersDAL, FileCheckingDAL
+from app.models import MessageModel, Analysis, MessageType, AnalysisDetail, FileChecking
 from app.settings import Settings
 from app.storage import save_upload
 from app.utils.long_messages import send_long_message
@@ -68,37 +68,75 @@ async def analysis(message: Message, state: FSMContext):
 
 @analysis_router.message(AnalysisScene.resume_waiting, F.document)
 async def handle_resume(message: Message, state: FSMContext, bot: Bot, settings: Settings) -> None:
-    await MessagesDAL.insert(
-        MessageModel(
-            type=MessageType.DOCUMENT,
-            message_id=message.message_id,
-            text=message.caption or "",
-            chat_id=message.chat.id,
-            user_id=message.from_user.id if message.from_user else None,
-            file_name=message.document.file_name,
-        )
-    )
-
     await message.answer("Читаем файл...")
 
     # download bytes
     try:
         resume_info = await get_text_from_message(bot, message, settings.data_dir)
+        await MessagesDAL.insert(
+            MessageModel(
+                type=MessageType.DOCUMENT,
+                message_id=message.message_id,
+                text="OK",
+                chat_id=message.chat.id,
+                user_id=message.from_user.id if message.from_user else None,
+                file_name=message.document.file_name,
+            )
+        )
+
     except:
         await message.answer(
             "Не удалось извлечь текст из файла. Пожалуйста, убедитесь, что это PDF или DOCX с текстом. Или обратитесь в поддержку."
         )
+        await MessagesDAL.insert(
+            MessageModel(
+                type=MessageType.DOCUMENT,
+                message_id=message.message_id,
+                text="ERROR",
+                chat_id=message.chat.id,
+                user_id=message.from_user.id if message.from_user else None,
+                file_name=message.document.file_name,
+            )
+        )
+
         raise
+
+    await message.answer("Проверяем файл...")
+
+    llm_service = LLMService.build(settings.llm_settings)
+    try:
+        detail = await llm_service.check_resume_is_valid(
+            resume_info.data,
+        )
+    except:
+        await message.answer(
+            "Произошла ошибка при проверке файла. Пожалуйста, попробуйте позже или обратитесь в поддержку."
+        )
+        raise
+
+    if not detail.is_valid:
+        await FileCheckingDAL.insert(FileChecking(
+            user_id=message.from_user.id,
+            filepath=resume_info.path,
+            result=detail,
+        ))
+        await message.answer(
+            f"Похоже, что это не резюме.\n\n"
+            # f"{detail.reason}\n\n"
+            "Пожалуйста, отправьте корректный файл описания вакансии текстом или в PDF/DOCX формате."
+        )
+        return
 
     # save file to analysis documents
     await state.update_data(resume_info=resume_info)
 
     # Add button to skip vacancy details
     await message.answer(
-        "Файл получен. Теперь добавьте, если хотите, название вакансии или её описание текстом или документом."
-        "Или нажмите кнопку ниже, чтобы пропустить этот шаг и сразу получить анализ резюме.",
+        "Файл получен.\n\n"
+        "Теперь добавьте, если хотите, название вакансии или её описание. Можно сделать текстом или документом PDF/TXT."
+        "Можете пропустить этот шаг и сразу получить анализ резюме.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=":skip: Без описания вакансии!", callback_data=CALLBACK_DATA)
+            InlineKeyboardButton(text="⏩ Без описания вакансии!", callback_data=CALLBACK_DATA)
         ]]),
     )
     await state.set_state(AnalysisScene.vacancy_waiting)
@@ -106,27 +144,62 @@ async def handle_resume(message: Message, state: FSMContext, bot: Bot, settings:
 
 @analysis_router.message(AnalysisScene.vacancy_waiting, F.document)
 async def handle_vacancy(message: Message, state: FSMContext, bot: Bot, settings: Settings) -> None:
-    await MessagesDAL.insert(
-        MessageModel(
-            type=MessageType.DOCUMENT,
-            message_id=message.message_id,
-            text=message.caption or "",
-            chat_id=message.chat.id,
-            user_id=message.from_user.id if message.from_user else None,
-            file_name=message.document.file_name,
-        )
-    )
 
     await message.answer("Читаем файл...")
 
     # download bytes
     try:
         vacancy_info = await get_text_from_message(bot, message, settings.data_dir)
+        await MessagesDAL.insert(
+            MessageModel(
+                type=MessageType.DOCUMENT,
+                message_id=message.message_id,
+                text="OK",
+                chat_id=message.chat.id,
+                user_id=message.from_user.id if message.from_user else None,
+                file_name=message.document.file_name,
+            )
+        )
     except:
+        await MessagesDAL.insert(
+            MessageModel(
+                type=MessageType.DOCUMENT,
+                message_id=message.message_id,
+                text="ERROR",
+                chat_id=message.chat.id,
+                user_id=message.from_user.id if message.from_user else None,
+                file_name=message.document.file_name,
+            )
+        )
         await message.answer(
             "Не удалось извлечь текст из файла. Пожалуйста, убедитесь, что это PDF или DOCX с текстом. Или обратитесь в поддержку."
         )
         raise
+
+
+    llm_service = LLMService.build(settings.llm_settings)
+    try:
+        file_checking_result = await llm_service.check_resume_is_valid(
+            vacancy_info.data,
+        )
+    except:
+        await message.answer(
+            "Произошла ошибка при проверке файла. Пожалуйста, попробуйте позже или обратитесь в поддержку."
+        )
+        raise
+
+    if not file_checking_result.is_valid:
+        await FileCheckingDAL.insert(FileChecking(
+            user_id=message.from_user.id,
+            filepath=vacancy_info.path,
+            result=file_checking_result,
+        ))
+        await message.answer(
+            f"Похоже, что это не описание вакансии.\n\n"
+            # f"{file_checking_result.reason}\n\n"
+            "Пожалуйста, отправьте корректный файл резюме в PDF или DOCX формате."
+        )
+        return
 
     data = await state.get_data()
     resume_info: DocumentInfo = data.get("resume_info")
@@ -196,7 +269,7 @@ async def process_resume(message: Message, cv_info: DocumentInfo, vacancy_info: 
 
     await message.answer("Анализируем резюме...\nЭто может занять несколько минут.")
     try:
-        llm_service = LLMService.build(settings)
+        llm_service = LLMService.build(settings.llm_settings)
         detail = await llm_service.full_feedback(
             cv_info.data,
             vacancy_info.data,

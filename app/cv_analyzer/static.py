@@ -68,4 +68,5 @@ def analyze_resume_text(text: str) -> AnalysisDetail:
         sections=sections_found,
         ok=True,
         raw=text,
+        prompt="static analize"
     )

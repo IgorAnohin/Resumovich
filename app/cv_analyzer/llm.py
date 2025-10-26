@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 from typing import Any
 import httpx
 import sentry_sdk
@@ -8,10 +9,15 @@ from openai import AsyncOpenAI
 
 from pydantic import BaseModel
 
-from app.models import AnalysisDetail
-from app.settings import Settings
+from app.models import AnalysisDetail, CheckFileResult
+from app.settings import Settings, LLMSettings
 
 logger = logging.getLogger(__name__)
+
+
+def remove_control_characters_re(text):
+    # Matches Unicode control characters in ranges U+0000-U+001F and U+007F-U+009F
+    return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', text)
 
 
 class LLMParseResult(BaseModel):
@@ -21,20 +27,21 @@ class LLMParseResult(BaseModel):
 
 
 class OpenAIClient:
-    def __init__(self, base_url: str, api_key: str, model: str):
-        self._model = model
+    def __init__(self, settings: LLMSettings):
+        self._model = settings.general_model
+        self._small_model = settings.small_model
 
         self._client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url
+            api_key=settings.api_key,
+            base_url=settings.base_url,
         )
 
-    async def gen_json(self, system: str, user: str) -> LLMParseResult:
-        content = await self._post(system, user)
+    async def gen_json(self, system: str, user: str, use_small_model: bool = False) -> LLMParseResult:
+        content = await self._post(system, user, use_small_model=use_small_model)
 
         try:
             return LLMParseResult(
-                data=json.loads(content.replace("\\", "/")),
+                data=json.loads(remove_control_characters_re(content)),
                 success=True,
                 raw=content,
             )
@@ -54,10 +61,10 @@ class OpenAIClient:
                     raw=content,
                 )
 
-    async def _post(self, system: str, user: str) -> str:
+    async def _post(self, system: str, user: str, use_small_model: bool) -> str:
         if "api.openai.com" in str(self._client.base_url):
             response = await self._client.responses.create(
-                model=self._model,
+                model=self._small_model if use_small_model else self._model,
                 instructions=system,
                 input=user,
             )
@@ -65,7 +72,7 @@ class OpenAIClient:
             return response.output_text
         else:
             response = await self._client.chat.completions.create(
-                model=self._model,
+                model=self._small_model if use_small_model else self._model,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -79,16 +86,58 @@ class LLMService:
         self._client = client
 
     @classmethod
-    def build(cls, settings: Settings) -> LLMService | None:
-        if settings.llm_base_url and settings.llm_api_key and settings.llm_model_name:
-            return LLMService(
-                OpenAIClient(
-                    settings.llm_base_url,
-                    settings.llm_api_key,
-                    settings.llm_model_name,
-                ),
-            )
-        raise Exception("Unable to find LLM settings")
+    def build(cls, settings: LLMSettings) -> LLMService | None:
+        return LLMService(OpenAIClient(settings))
+
+    async def check_resume_is_valid(self, cv_info: str) -> CheckFileResult:
+        sys = """
+Ты — фильтр входящих сообщений.  Твоя задача - определить, похоже ли сообщение пользователя на текст резюме.  
+
+Резюме — это структурированный текст, содержащий хотя бы часть полей: 
+«опыт работы», «образование», «навыки», «о себе», «контакты», «должность», «компания», «период работы», «сертификаты».  
+Обычно текст описывает профессиональный опыт, образование и навыки, иногда пунктами.  
+
+Если пользователь отправил изображение, ссылку, приветствие, случайный текст, мем, вопрос, жалобу, список покупок или что-то, не похожее на резюме — это НЕ резюме.
+
+ФОРМАТ ОТВЕТА СТРОГО JSON: {\"is_valid\": bool, \"reason\": string}. Если текст похож на описание резюме, установи "is_valid" в true. Если нет - в false и укажи причину в "reason".
+"""
+
+        user = f"""
+Проверь, является ли следующий текст резюме:
+---
+{cv_info}
+---
+"""
+        result = await self._client.gen_json(sys, user, use_small_model=True)
+        return CheckFileResult(
+            is_valid=result.data.get("is_valid", True),
+            reason=result.data.get("reason", ""),
+        )
+
+    async def check_vacancy_is_valid(self, vacancy_info: str) -> CheckFileResult:
+        sys = """
+    Ты — фильтр входящих сообщений. Твоя задача - определить, похоже ли сообщение пользователя на описание вакансии. Если нет - укажи почему.
+
+    Описание вакансии — это текст, в котором говорится о требованиях, задачах, обязанностях или условиях работы.  
+    Обычно там упоминаются слова вроде: «вакансия», «требования», «обязанности», «опыт», «компания», «гибрид», «офис», «стек», «мы ищем», «будет плюсом», «от кандидата требуется».  
+    Текст может быть скопирован с сайта или написан своими словами, но должен явно относиться к профессиональной позиции или роли.  
+
+    Если пользователь отправил случайный текст, приветствие, шутку, мем, ссылку, вопрос, песню, список покупок или сообщение, не связанное с вакансией — это не описание вакансии.
+
+    ФОРМАТ ОТВЕТА СТРОГО JSON: {\"is_valid\": bool, \"reason\": string}. Если текст похож на описание вакансии, установи "is_valid" в true. Если нет - в false и укажи причину в "reason".
+    """
+
+        user = f"""
+    Проверь, является ли следующий текст описанием вакансии:
+    ---
+    {vacancy_info}
+    ---
+    """
+        result = await self._client.gen_json(sys, user, use_small_model=True)
+        return CheckFileResult(
+            is_valid=result.data.get("is_valid", True),
+            reason=result.data.get("reason", ""),
+        )
 
     async def full_feedback(self, cv_info: str, vacancy_info: str) -> AnalysisDetail:
         sys = """
