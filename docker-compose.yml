@@ -24,27 +24,14 @@ services:
     ports:
       - "8081:8081"
 
-#   bot:
-#     build: .
-#     depends_on:
-#       - mongo
-#     restart: unless-stopped
-#     environment:
-#       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-#       MONGO_DSN: "mongodb://mongo:27017/resume_bot"
-#       DB_NAME: "resume_bot"
-#       DATA_DIR: "/data/uploads"
-#       SENTRY_DSN: "${SENTRY_DSN}"
-#       USER_AGREEMENT_URL: "${USER_AGREEMENT_URL}"
-#       PRIVACY_URL: "${PRIVACY_URL}"
-#       FREE_ONE_TIME_FULL: "1"
-#       LLM_BASE_URL: "${LLM_BASE_URL}"
-#       LLM_API_KEY: "${LLM_API_KEY}"
-#       LLM_MODEL_NAME: "${LLM_MODEL_NAME}"
-#     volumes:
-#       - ./data:/data
-#     ports:
-#       - "8000:8000"
+  bot:
+    build: .
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    env_file: ".env"
+    volumes:
+      - ./data:/data
 
 volumes:
   mongo_data:
