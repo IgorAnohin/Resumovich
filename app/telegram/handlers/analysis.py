@@ -11,8 +11,8 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from pydantic import BaseModel
 
+from app.cv_analyzer.llm.service import LLMService
 from app.cv_analyzer.static import analyze_resume_text
-from app.cv_analyzer.llm import LLMService
 from app.dal import MessagesDAL, AnalyticsDAL, UsersDAL, FileCheckingDAL
 from app.models import MessageModel, Analysis, MessageType, AnalysisDetail, FileChecking
 from app.settings import Settings
